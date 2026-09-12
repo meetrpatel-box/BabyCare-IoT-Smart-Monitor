@@ -71,6 +71,7 @@ static const char *TAG = "babyCare";
 #define MQTT_CMD_TOPIC       "cradle/" DEVICE_ID "/cmd"
 #define MQTT_RESPONSE_TOPIC  "cradle/" DEVICE_ID "/response"
 #define MQTT_VITALS_TOPIC    "cradle/" DEVICE_ID "/vitals"
+#define MQTT_ALERT_TOPIC     "cradle/" DEVICE_ID "/alert"
 #define MQTT_OFFLINE_MSG     "{\"device\":\"" DEVICE_NAME "\",\"deviceId\":\"" DEVICE_ID "\",\"status\":\"offline\"}"
 
 /* Pins */
@@ -749,6 +750,21 @@ static void mqtt_publish_qos(const char *topic, const char *msg, int qos)
 static void mqtt_publish(const char *topic, const char *msg)
 {
     mqtt_publish_qos(topic, msg, 1);
+}
+
+void app_mqtt_publish_alert(const char *event_type, float intensity)
+{
+    if (!mqtt_connected || !mqtt_client) {
+        ESP_LOGW(TAG, "Cannot publish alert '%s': MQTT not connected", event_type ? event_type : "unknown");
+        return;
+    }
+    char buf[256];
+    int64_t now_ms = esp_timer_get_time() / 1000;
+    snprintf(buf, sizeof(buf),
+             "{\"event\":\"%s\",\"deviceId\":\"" DEVICE_ID "\",\"device\":\"" DEVICE_NAME "\",\"intensity\":%.2f,\"timestamp\":%lld}",
+             event_type ? event_type : "cry_detected", (double)intensity, (long long)now_ms);
+    mqtt_publish_qos(MQTT_ALERT_TOPIC, buf, 1);
+    ESP_LOGI(TAG, "🚨 Cry Alert published to MQTT topic %s: %s", MQTT_ALERT_TOPIC, buf);
 }
 
 static void sensor_publish_task(void *pv)

@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:go_router/go_router.dart';
@@ -120,6 +122,8 @@ class _BabyTrackAppState extends State<BabyTrackApp> {
   final _deviceMqttProvider = DeviceMqttProvider();
   final _webrtcService = WebRTCService();
   final _webrtcJsService = WebRTCJsService();
+  final _scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
+  StreamSubscription<Map<String, dynamic>>? _alertSub;
 
   late final GoRouter _router;
 
@@ -139,6 +143,73 @@ class _BabyTrackAppState extends State<BabyTrackApp> {
 
     // Connect to MQTT broker so device/vitals features work on app start
     _deviceMqttProvider.initialize();
+
+    // Listen to real-time IoT alerts (cry detection, etc.)
+    _alertSub = _deviceMqttProvider.cryAlertStream.listen((alert) {
+      _handleCryAlert(alert);
+    });
+  }
+
+  void _handleCryAlert(Map<String, dynamic> alert) {
+    debugPrint('🚨 [AppAlert] Incoming cry alert: $alert');
+    try {
+      SystemSound.play(SystemSoundType.alert);
+      HapticFeedback.heavyImpact();
+      Future.delayed(const Duration(milliseconds: 250), () {
+        HapticFeedback.vibrate();
+      });
+    } catch (_) {}
+
+    final deviceId = alert['deviceId'] ?? 'ESP32';
+    final intensity = alert['intensity'];
+    final intensityPct = intensity is num ? (intensity * 100).round() : 85;
+
+    final messenger = _scaffoldMessengerKey.currentState;
+    if (messenger != null) {
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFFD32F2F),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          duration: const Duration(seconds: 10),
+          content: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withAlpha(51),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.child_care_rounded, color: Colors.white, size: 28),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('🚨 Baby is Crying!',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white)),
+                    const SizedBox(height: 2),
+                    Text('Detected from $deviceId ($intensityPct% intensity)',
+                        style: const TextStyle(fontSize: 13, color: Colors.white70)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          action: SnackBarAction(
+            label: 'OPEN ANALYZER',
+            textColor: Colors.amberAccent,
+            onPressed: () {
+              _router.push('/cry-analyzer');
+            },
+          ),
+        ),
+      );
+    }
   }
 
   void _loadBabiesIfNeeded() {
@@ -189,6 +260,7 @@ class _BabyTrackAppState extends State<BabyTrackApp> {
     _deviceMqttProvider.dispose();
     _webrtcService.dispose();
     _webrtcJsService.dispose();
+    _alertSub?.cancel();
     super.dispose();
   }
 
@@ -224,6 +296,7 @@ class _BabyTrackAppState extends State<BabyTrackApp> {
           }
 
           return MaterialApp.router(
+            scaffoldMessengerKey: _scaffoldMessengerKey,
             title: 'BabyTrack Monitor',
             debugShowCheckedModeBanner: false,
             theme: AppTheme.lightTheme,

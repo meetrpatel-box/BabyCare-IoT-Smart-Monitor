@@ -123,7 +123,8 @@ class MqttService extends ChangeNotifier {
       _client.subscribe('cradle/+/status', MqttQos.atMostOnce);
       _client.subscribe('cradle/+/response', MqttQos.atMostOnce);
       _client.subscribe('cradle/+/vitals', MqttQos.atMostOnce);
-      debugPrint('[MQTT] Subscribed to cradle/+/status, response, vitals');
+      _client.subscribe('cradle/+/alert', MqttQos.atLeastOnce);
+      debugPrint('[MQTT] Subscribed to cradle/+/status, response, vitals, alert');
 
       _updatesSubscription =
           _client.updates!.listen((List<MqttReceivedMessage<MqttMessage>> c) {

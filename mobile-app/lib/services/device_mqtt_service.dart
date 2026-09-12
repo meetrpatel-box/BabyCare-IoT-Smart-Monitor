@@ -11,6 +11,13 @@ class DeviceMqttService extends MqttService {
   final Map<String, MqttDeviceModel> _devices = {};
   final Map<String, StreamSubscription> _deviceSubscriptions = {};
 
+  // Alert stream controller
+  final StreamController<Map<String, dynamic>> _alertController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get alertStream => _alertController.stream;
+  Map<String, dynamic>? _latestAlert;
+  Map<String, dynamic>? get latestAlert => _latestAlert;
+
   // Staleness detection: mark device offline when no heartbeat for >30 s
   Timer? _stalenessTimer;
   static const _stalenessThreshold = Duration(seconds: 30);
@@ -119,6 +126,8 @@ class DeviceMqttService extends MqttService {
       _handleStatusMessage(deviceId, payload);
     } else if (subtopic == 'vitals') {
       _handleVitalsMessage(deviceId, payload);
+    } else if (subtopic == 'alert') {
+      _handleAlertMessage(deviceId, payload);
     }
   }
 
@@ -172,6 +181,20 @@ class DeviceMqttService extends MqttService {
       notifyListeners();
     } catch (e) {
       debugPrint('[DeviceMqtt] Vitals parse error: $e');
+    }
+  }
+
+  void _handleAlertMessage(String deviceId, String payload) {
+    try {
+      final data = jsonDecode(payload) as Map<String, dynamic>;
+      data['deviceId'] = deviceId;
+      data['receivedAt'] = DateTime.now().toIso8601String();
+      _latestAlert = data;
+      _alertController.add(data);
+      debugPrint('🚨 [DeviceMqtt] Alert received from $deviceId: $data');
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[DeviceMqtt] Alert parse error: $e');
     }
   }
 
@@ -246,6 +269,7 @@ class DeviceMqttService extends MqttService {
     }
     _deviceSubscriptions.clear();
     _devices.clear();
+    await _alertController.close();
 
     await super.dispose();
   }

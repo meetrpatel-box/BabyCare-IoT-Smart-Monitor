@@ -48,9 +48,10 @@ static const char *TAG = "cry_gate_feature";
 static volatile bool s_monitoring = false;
 static volatile bool s_stop_requested = false;
 static bool s_deps_initialized = false;
+static float s_last_decision2_score = 0.0f;
 
-// From app_main.c -- mutual exclusion: cry-monitoring, recording, and
-// lullaby playback share babycare's one physical I2S clock.
+// From app_main.c -- alert publisher and mutual exclusion:
+extern void app_mqtt_publish_alert(const char *event_type, float intensity);
 extern volatile bool g_audio_playing;
 extern volatile bool recording_active;
 
@@ -104,6 +105,7 @@ static bool run_decision2(const float *clip, int n_clip_samples) {
 
     heap_caps_free(win);
 
+    s_last_decision2_score = max_score;
     bool is_cry = edge_model_is_cry(max_score);
     ESP_LOGI(TAG, "Decision 2 result: max_score=%.4f threshold=%.2f -> %s",
              (double)max_score, (double)CRY_GATE_THRESHOLD,
@@ -163,13 +165,16 @@ static void monitor_task(void *pv) {
         bool is_cry = run_decision2(clip.audio, clip.n_samples);
 
         if (is_cry) {
+            // Immediately dispatch real-time MQTT cry alert to phone app
+            app_mqtt_publish_alert("cry_detected", s_last_decision2_score);
+
             // sd_upload_save_and_queue expects exactly CRY_GATE_N_SAMPLES (10s).
             // The full clip is ~21.5s, so pick the center window -- this is the
             // window that Decision 2's majority vote most likely confirmed as cry.
             int center_offset = (clip.n_samples - CRY_GATE_N_SAMPLES) / 2;
             if (center_offset < 0) center_offset = 0;
             cloud_upload_ram_wav((float *)clip.audio + center_offset, CRY_GATE_N_SAMPLES, CRY_GATE_SR);
-            ESP_LOGI(TAG, "Cry confirmed -- RAM upload sent (center window, offset=%d)", center_offset);
+            ESP_LOGI(TAG, "Cry confirmed -- Alert published & RAM upload sent (center window, offset=%d)", center_offset);
         } else {
             ESP_LOGI(TAG, "Not a cry -- clip discarded");
         }

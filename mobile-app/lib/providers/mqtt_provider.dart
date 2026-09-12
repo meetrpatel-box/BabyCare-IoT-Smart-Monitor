@@ -95,6 +95,12 @@ class DeviceMqttProvider extends ChangeNotifier {
       [Map<String, dynamic>? params]) =>
       _executeCommand(deviceId, cmd, params);
 
+  /// Real-time stream of IoT alerts (e.g., cry detection)
+  Stream<Map<String, dynamic>> get cryAlertStream => _mqttService.alertStream;
+
+  /// Latest alert received from any device
+  Map<String, dynamic>? get latestAlert => _mqttService.latestAlert;
+
   bool isDeviceOnline(String deviceId) => _mqttService.isDeviceOnline(deviceId);
 
   /// Latest vitals received from the board, or null if none received yet.

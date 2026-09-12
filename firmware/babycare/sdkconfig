@@ -560,7 +560,7 @@ CONFIG_EXAMPLE_PROV_SHOW_QR=y
 CONFIG_CRY_GATE_SD_PIN_CLK=39
 CONFIG_CRY_GATE_SD_PIN_CMD=38
 CONFIG_CRY_GATE_SD_PIN_D0=40
-CONFIG_CRY_GATE_API_URL="http://192.168.1.100/upload"
+CONFIG_CRY_GATE_API_URL="https://cry-classifier-832843143406.asia-south1.run.app/predict"
 # end of Cry Gate Configuration
 
 #
