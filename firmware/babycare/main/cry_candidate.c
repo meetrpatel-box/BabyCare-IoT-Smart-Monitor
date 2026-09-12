@@ -205,9 +205,17 @@ static void cry_candidate_infer_task(void *arg) {
                       "rms=%.4f floor=%.4f -> %s",
                  (double)score, (double)CRY_GATE_THRESHOLD, (double)s_last_latency_ms,
                  (double)edge_model_last_mel_ms(), (double)edge_model_last_infer_ms(),
-                 (double)rms, (double)noise_floor, is_cry ? "CRY CANDIDATE" : "not cry");
+                 (double)rms, (double)noise_floor, is_cry ? "🚨 CRY CONFIRMED 🚨" : "not cry");
 
         if (is_cry) {
+            static int64_t s_last_alert_us = 0;
+            int64_t now_us = esp_timer_get_time();
+            if (s_last_alert_us == 0 || (now_us - s_last_alert_us) >= 5000000LL) {
+                s_last_alert_us = now_us;
+                ESP_LOGI(TAG, "🚨 DISPATCHING REAL-TIME MQTT ALERT: score=%.4f", (double)score);
+                extern void app_mqtt_publish_alert(const char *event_type, float intensity);
+                app_mqtt_publish_alert("cry_detected", score);
+            }
             audio_capture_cry_signal_trigger();
         }
     }
@@ -225,19 +233,6 @@ bool cry_candidate_on_chunk(const float *mono, int n_frames) {
         return false;
     }
     if (!edge_model_available()) {
-        // Fail OPEN, not closed: Decision 1 has no DSP fallback anymore (see
-        // trigger.h's history note), so if the edge model failed to load,
-        // the only alternative to "silently detect zero cries, forever,
-        // with no fallback" is to trigger on Stage A's raw energy gate
-        // alone -- over-triggers on any loud sound, but that is a visible,
-        // recoverable failure mode (extra captures/uploads to notice and
-        // fix), unlike total silent monitoring failure, which directly
-        // violates "do not miss a real cry". Decision 2 (app_main.c) still
-        // runs its own edge_model_available() check independently and
-        // fails open there too (uploads rather than silently discarding).
-        // This is the ONLY case where this function returns true directly
-        // (synchronous, cheap) -- the ML path below always goes through
-        // the async request/signal mechanism instead.
         static bool warned = false;
         if (!warned) {
             ESP_LOGE(TAG, "Edge model unavailable -- DEGRADED MODE: triggering on raw energy "
@@ -246,8 +241,8 @@ bool cry_candidate_on_chunk(const float *mono, int n_frames) {
         }
         return gate_open;
     }
-    if (s_ring_samples_written < CRY_GATE_N_SAMPLES) {
-        return false;  // rolling window not warmed up yet (first ~10s after boot)
+    if (s_ring_samples_written < (CRY_GATE_SR * 3)) {
+        return false;  // rolling window warm-up (3s after boot)
     }
 
     int64_t now_us = esp_timer_get_time();
@@ -257,6 +252,7 @@ bool cry_candidate_on_chunk(const float *mono, int n_frames) {
     }
     s_last_infer_request_us = now_us;
 
+    ESP_LOGI(TAG, "Stage A trigger! Requesting ML inference (samples=%lld)...", s_ring_samples_written);
     xSemaphoreGive(s_infer_request_sem);  // wake cry_candidate_infer_task; never blocks
     return false;  // the actual trigger, if any, arrives asynchronously later
 }

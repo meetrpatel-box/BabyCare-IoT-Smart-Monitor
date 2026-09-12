@@ -59,6 +59,7 @@
 #include "esp_codec_dev.h"
 #include "tca9555_driver.h"
 #include "cry_gate_feature.h"
+#include "audio_capture_cry.h"
 #include "camera_stream.h"
 
 static const char *TAG = "babyCare";
@@ -906,8 +907,9 @@ static void cloud_mic_stream_task(void *pv) {
     while (1) {
         bool ws_active = camera_stream_is_ws_connected();
         bool udp_active = (g_udp_client_connected && g_udp_sock >= 0);
+        bool cry_active = cry_gate_is_monitoring();
 
-        if (!ws_active && !udp_active) {
+        if (!ws_active && !udp_active && !cry_active) {
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
         }
@@ -935,6 +937,9 @@ static void cloud_mic_stream_task(void *pv) {
                 } else {
                     ESP_LOGW(TAG, "Local UDP sendto failed (err=%d)", errno);
                 }
+            }
+            if (cry_active) {
+                audio_capture_cry_feed_pcm16(mb, CLOUD_MIC_SAMPLES);
             }
         } else {
             vTaskDelay(pdMS_TO_TICKS(10));

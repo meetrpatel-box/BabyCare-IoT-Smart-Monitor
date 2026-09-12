@@ -22,6 +22,7 @@
 #define AUDIO_CAPTURE_CRY_H_
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,10 +37,12 @@ extern "C" {
 #define CRY_LOCKOUT_MS               3000
 #define CRY_POST_CRY_LOCKOUT_MS     180000
 
-// One-time setup. Allocates PSRAM buffers, creates sync primitives, and
-// starts the continuous capture task pinned to core 1. Must be called after
-// bsp_board init (esp_ret_rx_handle() must be valid). Returns 0 on success.
+// One-time setup. Allocates PSRAM buffers and creates sync primitives.
+// Returns 0 on success.
 int audio_capture_cry_init(void);
+
+// Feeds 16-bit mono PCM samples (from cloud_mic_stream_task) directly into the cry pipeline
+void audio_capture_cry_feed_pcm16(const int16_t *pcm16, int n_samples);
 
 // Chunk callback: return true to synchronously trigger a capture.
 typedef bool (*audio_capture_cry_chunk_cb_t)(const float *mono, int n_frames);

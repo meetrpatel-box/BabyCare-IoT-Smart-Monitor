@@ -53,7 +53,6 @@ static volatile bool         s_async_trigger_pending = false;
 static int                   s_clip_samples_written = 0;
 static SemaphoreHandle_t     s_state_mutex   = NULL;
 static SemaphoreHandle_t     s_clip_ready_sem = NULL;
-static TaskHandle_t          s_capture_task_handle = NULL;
 
 static audio_capture_cry_chunk_cb_t s_chunk_cb = NULL;
 
@@ -138,69 +137,40 @@ static void capture_state_step(const float *mono, int n_frames,
     }
 }
 
-// ----- Capture task -----
-extern volatile bool g_video_stream_active;
-extern volatile bool recording_active;
+// ----- Feed mono PCM16 from unified mic stream -----
 extern volatile bool g_audio_playing;
+static bool s_initialized = false;
 
-static void audio_capture_cry_task(void *arg) {
-    esp_codec_dev_handle_t rec_dev = esp_ret_record_dev();
-    if (rec_dev == NULL) {
-        ESP_LOGE(TAG, "esp_ret_record_dev() returned NULL -- cannot run capture task");
-        vTaskDelete(NULL);
+void audio_capture_cry_feed_pcm16(const int16_t *pcm16, int n_samples) {
+    if (!s_initialized || !s_preroll_ring || !s_active_clip || !s_state_mutex || !pcm16 || n_samples <= 0) {
+        return;
+    }
+    // Don't detect cries while speaker is playing lullaby to prevent acoustic self-trigger
+    if (g_audio_playing) {
         return;
     }
 
-    // bsp_board reads 4-channel 16-bit frames (4 ch x 16-bit per frame)
-    int16_t *raw = (int16_t *)heap_caps_malloc(CAPTURE_READ_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!raw) raw = (int16_t *)malloc(CAPTURE_READ_BYTES);
-    float   *mono_chunk = (float *)heap_caps_malloc(CAPTURE_CHUNK_FRAMES * sizeof(float),
-                                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!mono_chunk) mono_chunk = (float *)malloc(CAPTURE_CHUNK_FRAMES * sizeof(float));
-    if (raw == NULL || mono_chunk == NULL) {
-        ESP_LOGE(TAG, "OOM allocating chunk buffers");
-        free(raw); free(mono_chunk);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    ESP_LOGI(TAG, "Continuous capture task started (16kHz, bsp_board codec)");
-
-    for (;;) {
-        // While video stream is active or parent is speaking / two-way audio active:
-        // pause ML capture to avoid interference, acoustic feedback, and conserve CPU/DMA
-        if (g_video_stream_active || recording_active || g_audio_playing || camera_stream_is_ws_connected()) {
-            vTaskDelay(pdMS_TO_TICKS(100));
-            continue;
+    float chunk[CAPTURE_CHUNK_FRAMES];
+    int offset = 0;
+    while (offset < n_samples) {
+        int frames = (n_samples - offset < CAPTURE_CHUNK_FRAMES) ? (n_samples - offset) : CAPTURE_CHUNK_FRAMES;
+        for (int i = 0; i < frames; i++) {
+            chunk[i] = (float)pcm16[offset + i] / 32768.0f;
         }
 
-        // esp_codec_dev_read returns ESP_CODEC_DEV_OK on success
-        if (esp_codec_dev_read(rec_dev, raw, CAPTURE_READ_BYTES) != ESP_CODEC_DEV_OK) {
-            vTaskDelay(pdMS_TO_TICKS(10));
-            continue;
-        }
-
-        // Downmix: extract channel 1 (the physical mic on Korvo-2),
-        // matching audio_recording_task's known-good channel selection.
-        for (int i = 0; i < CAPTURE_CHUNK_FRAMES; i++) {
-            mono_chunk[i] = (float)raw[4 * i + 1] / 32768.0f;
-        }
-
-        preroll_ring_write(mono_chunk, CAPTURE_CHUNK_FRAMES);
+        preroll_ring_write(chunk, frames);
 
         bool trigger_fired = (s_chunk_cb != NULL)
-                             ? s_chunk_cb(mono_chunk, CAPTURE_CHUNK_FRAMES)
+                             ? s_chunk_cb(chunk, frames)
                              : false;
 
-        xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-        capture_state_step(mono_chunk, CAPTURE_CHUNK_FRAMES, trigger_fired);
-        xSemaphoreGive(s_state_mutex);
-    }
+        if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            capture_state_step(chunk, frames, trigger_fired);
+            xSemaphoreGive(s_state_mutex);
+        }
 
-    // unreachable
-    free(raw);
-    free(mono_chunk);
-    vTaskDelete(NULL);
+        offset += frames;
+    }
 }
 
 // ----- Public API -----
@@ -221,24 +191,9 @@ int audio_capture_cry_init(void) {
     s_preroll_write_idx = 0;
     s_preroll_written   = 0;
     s_state             = CAP_STATE_IDLE;
+    s_initialized       = true;
 
-    BaseType_t ok = pdFAIL;
-#if CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY
-    ok = xTaskCreatePinnedToCoreWithCaps(
-        audio_capture_cry_task, "cry_capture", 4096, NULL, 10,
-        &s_capture_task_handle, 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#endif
-    if (ok != pdPASS) {
-        ok = xTaskCreatePinnedToCore(
-            audio_capture_cry_task, "cry_capture", 4096, NULL, 10,
-            &s_capture_task_handle, 1);
-    }
-    if (ok != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create continuous capture task");
-        return -1;
-    }
-
-    ESP_LOGI(TAG, "audio_capture_cry_init: preroll=%dms post=%dms clip=%d samples",
+    ESP_LOGI(TAG, "audio_capture_cry_init: preroll=%dms post=%dms clip=%d samples (unified mic feed)",
              CRY_CAPTURE_PREROLL_MS, CRY_CAPTURE_POST_TRIGGER_MS, CRY_CLIP_N_SAMPLES);
     return 0;
 }
@@ -255,7 +210,7 @@ void audio_capture_cry_signal_trigger(void) {
 }
 
 int audio_capture_cry_wait_for_clip(audio_cry_clip_t *out_clip) {
-    if (s_capture_task_handle == NULL) {
+    if (!s_initialized) {
         ESP_LOGE(TAG, "audio_capture_cry_init() not called");
         return -1;
     }
