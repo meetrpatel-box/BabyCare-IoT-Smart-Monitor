@@ -1,0 +1,174 @@
+#include <WiFi.h>
+#include <WebServer.h>
+
+// --- WIFI CREDENTIALS ---
+const char* ssid = "BMTECHNO";
+const char* password = "22102001";
+
+// Create a web server object on port 80
+WebServer server(80);
+
+// --- HARDWARE PINS ---
+const int dataPin  = 7;   // DS (Pin 14 on 74HC595)
+const int latchPin = 6;   // STCP (Pin 12 on 74HC595)
+const int clockPin = 5;   // SHCP (Pin 11 on 74HC595)
+
+// --- MOTOR SEQUENCE ---
+// 8-Step Half-Stepping Sequence
+const byte stepSequence[8] = {0x01, 0x03, 0x02, 0x06, 0x04, 0x0C, 0x08, 0x09};
+
+// Motor control states
+int motor1StepIndex = 0;
+int motor2StepIndex = 0;
+
+unsigned long lastMotor1Time = 0;
+unsigned long lastMotor2Time = 0;
+
+unsigned long motor1SpeedDelay = 2; // Up/Down speed
+unsigned long motor2SpeedDelay = 2; // Left/Right speed
+
+// Web-controlled flags and directions
+bool motor1Run = false;
+bool motor2Run = false;
+int motor1Direction = 1;  // 1 = Up, -1 = Down
+int motor2Direction = 1;  // 1 = Right, -1 = Left
+
+byte shiftRegisterState = 0x00; 
+
+// --- HTML DASHBOARD (Stored in Flash Memory) ---
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE HTML><html>
+<head>
+  <title>Motor Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; text-align: center; margin: 0; padding: 20px; }
+    h2 { color: #00bcd4; margin-bottom: 30px; }
+    .d-pad { display: grid; grid-template-columns: repeat(3, 80px); grid-gap: 15px; justify-content: center; margin-bottom: 30px; }
+    .btn { background-color: #333; border: 2px solid #00bcd4; color: white; padding: 20px 0; font-size: 18px; font-weight: bold; border-radius: 10px; cursor: pointer; user-select: none; transition: 0.2s; }
+    .btn:active { background-color: #00bcd4; color: #121212; }
+    .empty { background: transparent; border: none; }
+    .btn-stop { background-color: #d32f2f; border-color: #f44336; grid-column: 2; }
+    .btn-stop:active { background-color: #f44336; }
+  </style>
+  <script>
+    // Send a fetch request to the ESP32 endpoint without reloading the page
+    function sendCommand(cmd) {
+      fetch('/' + cmd).catch(function(error) { console.log(error); });
+    }
+  </script>
+</head>
+<body>
+  <h2>Local Motor Control</h2>
+  
+  <div class="d-pad">
+    <div class="empty"></div>
+    <button class="btn" onmousedown="sendCommand('up')" onmouseup="sendCommand('stop1')" ontouchstart="sendCommand('up')" ontouchend="sendCommand('stop1')">UP</button>
+    <div class="empty"></div>
+    
+    <button class="btn" onmousedown="sendCommand('left')" onmouseup="sendCommand('stop2')" ontouchstart="sendCommand('left')" ontouchend="sendCommand('stop2')">LEFT</button>
+    <button class="btn btn-stop" onclick="sendCommand('stopall')">STOP</button>
+    <button class="btn" onmousedown="sendCommand('right')" onmouseup="sendCommand('stop2')" ontouchstart="sendCommand('right')" ontouchend="sendCommand('stop2')">RIGHT</button>
+    
+    <div class="empty"></div>
+    <button class="btn" onmousedown="sendCommand('down')" onmouseup="sendCommand('stop1')" ontouchstart="sendCommand('down')" ontouchend="sendCommand('stop1')">DOWN</button>
+    <div class="empty"></div>
+  </div>
+  
+  <p style="color: #888; font-size: 14px;">Press and hold buttons to jog motors.</p>
+</body>
+</html>
+)rawliteral";
+
+void updateShiftRegister() {
+  digitalWrite(latchPin, LOW);
+  shiftOut(dataPin, clockPin, MSBFIRST, shiftRegisterState);
+  digitalWrite(latchPin, HIGH);
+}
+
+void setup() {
+  Serial.begin(115200);
+  
+  pinMode(dataPin, OUTPUT);
+  pinMode(latchPin, OUTPUT);
+  pinMode(clockPin, OUTPUT);
+  
+  shiftRegisterState = 0x00;
+  updateShiftRegister();
+
+  // --- CONNECT TO WIFI ---
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected!");
+  Serial.print("Dashboard IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  // --- DEFINE WEB SERVER ROUTES ---
+  server.on("/", []() {
+    server.send(200, "text/html", index_html);
+  });
+
+  server.on("/up", []() {
+    motor1Direction = 1; motor1Run = true;
+    server.send(200, "text/plain", "OK");
+  });
+  
+  server.on("/down", []() {
+    motor1Direction = -1; motor1Run = true;
+    server.send(200, "text/plain", "OK");
+  });
+  
+  server.on("/left", []() {
+    motor2Direction = -1; motor2Run = true;
+    server.send(200, "text/plain", "OK");
+  });
+  
+  server.on("/right", []() {
+    motor2Direction = 1; motor2Run = true;
+    server.send(200, "text/plain", "OK");
+  });
+
+  server.on("/stop1", []() { motor1Run = false; server.send(200, "text/plain", "OK"); });
+  server.on("/stop2", []() { motor2Run = false; server.send(200, "text/plain", "OK"); });
+  server.on("/stopall", []() { motor1Run = false; motor2Run = false; server.send(200, "text/plain", "OK"); });
+
+  // Start the server
+  server.begin();
+}
+
+void loop() {
+  // Listen for incoming web requests
+  server.handleClient();
+
+  unsigned long currentTime = millis();
+  bool stateChanged = false;
+
+  // --- MOTOR 1 (UP/DOWN) ---
+  if (motor1Run && (currentTime - lastMotor1Time >= motor1SpeedDelay)) {
+    lastMotor1Time = currentTime;
+    motor1StepIndex = (motor1StepIndex + motor1Direction + 8) % 8; 
+    
+    shiftRegisterState &= 0xF0; // Clear lower 4 bits
+    shiftRegisterState |= (stepSequence[motor1StepIndex] & 0x0F); 
+    stateChanged = true;
+  }
+
+  // --- MOTOR 2 (LEFT/RIGHT) ---
+  if (motor2Run && (currentTime - lastMotor2Time >= motor2SpeedDelay)) {
+    lastMotor2Time = currentTime;
+    motor2StepIndex = (motor2StepIndex + motor2Direction + 8) % 8; 
+    
+    shiftRegisterState &= 0x0F; // Clear upper 4 bits
+    shiftRegisterState |= ((stepSequence[motor2StepIndex] << 4) & 0xF0); 
+    stateChanged = true;
+  }
+
+  if (stateChanged) {
+    updateShiftRegister();
+  }
+}

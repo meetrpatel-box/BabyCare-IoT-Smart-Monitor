@@ -1,0 +1,18 @@
+# Build directories
+build/
+.gradle/
+.dart_tool/
+
+# OS and IDE files
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Logs
+*.log

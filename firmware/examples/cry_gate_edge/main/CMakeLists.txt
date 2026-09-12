@@ -1,0 +1,22 @@
+idf_component_register(
+    SRCS
+        "app_main.c"
+        "audio_capture.c"
+        "mel_spectrogram.c"
+        "cry_gate_inference.cc"
+        "sd_upload.c"
+    PRIV_REQUIRES
+        esp_wifi
+        nvs_flash
+        esp_event
+        esp_netif
+        esp_driver_i2s
+        esp_driver_i2c
+        esp_driver_gpio
+        esp_driver_sdmmc
+        fatfs
+        esp_http_client
+        esp-tflite-micro
+        esp-dsp
+    INCLUDE_DIRS "." "data"
+)

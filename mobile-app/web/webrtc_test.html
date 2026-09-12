@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>WebRTC Browser Test</title>
+</head>
+<body>
+  <h1>WebRTC Native Browser Test</h1>
+  <button onclick="testWebRTC()">Test WebRTC</button>
+  <pre id="log"></pre>
+
+  <script>
+    function log(msg) {
+      const logEl = document.getElementById('log');
+      logEl.textContent += msg + '\n';
+      console.log(msg);
+    }
+
+    async function testWebRTC() {
+      log('Starting WebRTC test...');
+
+      try {
+        // Create peer connection
+        const pc = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' }
+          ]
+        });
+
+        // Set up callbacks
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            log('✅ ICE candidate generated: ' + event.candidate.candidate.substring(0, 50) + '...');
+          } else {
+            log('✅ ICE gathering complete');
+          }
+        };
+
+        pc.onicegatheringstatechange = () => {
+          log('ICE gathering state: ' + pc.iceGatheringState);
+        };
+
+        pc.oniceconnectionstatechange = () => {
+          log('ICE connection state: ' + pc.iceConnectionState);
+        };
+
+        pc.onconnectionstatechange = () => {
+          log('Connection state: ' + pc.connectionState);
+        };
+
+        // Create offer (this should trigger ICE gathering)
+        log('Creating offer...');
+        const offer = await pc.createOffer();
+        log('Offer created');
+
+        await pc.setLocalDescription(offer);
+        log('Local description set');
+        log('Waiting for ICE candidates...');
+
+        // Wait a bit to see if candidates are generated
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        log('\nTest complete!');
+        log('If you see ICE candidate logs above, WebRTC works in this browser.');
+        log('If not, there may be a browser or network issue.');
+
+      } catch (error) {
+        log('❌ Error: ' + error.message);
+      }
+    }
+  </script>
+</body>
+</html>

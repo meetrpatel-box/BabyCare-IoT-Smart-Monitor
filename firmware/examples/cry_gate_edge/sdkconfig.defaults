@@ -1,0 +1,26 @@
+# ESP32-S3-Korvo-2 V3 (ESP32-S3R8, 8MB octal PSRAM, 16MB flash)
+
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+
+# PSRAM is required: mel_spectrogram.c's working buffer (~220KB), the TFLite
+# Micro tensor arena (~2MB, see cry_gate_inference.cc), and the audio/feature
+# buffers in app_main.c (~1.1MB) all allocate from MALLOC_CAP_SPIRAM.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_ESP32S3_SPIRAM_SUPPORT=y
+
+# TFLite Micro + FFT + HTTP client on the main task benefit from a larger
+# stack than the 3584-byte IDF default.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# C++ exceptions/RTTI off (matches typical TFLite Micro embedded builds,
+# smaller binary) -- esp-tflite-micro does not require them.
+CONFIG_COMPILER_CXX_EXCEPTIONS=n

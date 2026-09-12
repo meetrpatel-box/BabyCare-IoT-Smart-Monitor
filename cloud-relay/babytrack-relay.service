@@ -1,0 +1,18 @@
+[Unit]
+Description=BabyTrack Go Relay
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/babytrack/relay
+ExecStart=/opt/babytrack/relay/babytrack-relay
+Restart=always
+RestartSec=3
+Environment=RELAY_TOKEN=2af0a9e90c97421aa37972c3c5e28151157dc5360000a1f9fe7efd9875dd96c8
+Environment=GO2RTC_URL=http://127.0.0.1:1984
+Environment=WS_PORT=8765
+Environment=HTTP_PORT=8766
+
+[Install]
+WantedBy=multi-user.target

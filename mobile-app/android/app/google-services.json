@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "1007232493479",
+    "project_id": "slumber-insights-tqv7z",
+    "storage_bucket": "slumber-insights-tqv7z.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1007232493479:android:654ed9f85a938302dd7882",
+        "android_client_info": {
+          "package_name": "com.example.baby_track_flutter"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1007232493479-jhfd0crcdr04oqviii8i6dcg1cek899d.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.baby_track_flutter",
+            "certificate_hash": "d419654821fe85b0d4dc279ff36fd5aff1eb7c83"
+          }
+        },
+        {
+          "client_id": "1007232493479-73l4ptps960cf0sie8a27qo2kgcm6s7r.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAeodMi7VhoeywCnVQS1ZSJmKpKePYViHw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1007232493479-73l4ptps960cf0sie8a27qo2kgcm6s7r.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "1007232493479-sad7og2qir33e6ooqqprikncuk9ekit6.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.babytrack.mobile"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

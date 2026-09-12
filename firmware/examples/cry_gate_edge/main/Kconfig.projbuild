@@ -1,0 +1,45 @@
+menu "Cry Gate Edge Configuration"
+
+    config CRY_GATE_WIFI_SSID
+        string "WiFi SSID"
+        default "CHANGE_ME"
+        help
+            Network the ESP32-S3 joins to upload accepted clips.
+
+    config CRY_GATE_WIFI_PASSWORD
+        string "WiFi password"
+        default "CHANGE_ME"
+
+    config CRY_GATE_API_URL
+        string "Cloud API predict URL"
+        default "https://cry-classifier-832843143406.asia-south1.run.app/predict"
+        help
+            Production FastAPI POST /predict endpoint (D:\nxm\ML_pipeline\api\app.py),
+            deployed on Google Cloud Run (asia-south1). Publicly reachable, no auth
+            header required -- confirmed live 2026-07-09 with real end-to-end
+            /predict calls (both a true cry and a non-cry sample from
+            ML_pipeline_edge/calibration_data, matching this firmware's exact
+            multipart contract: field name "file"). See
+            docs/ENGINEERING_DECISIONS.md for the full contract notes.
+
+    config CRY_GATE_SD_PIN_CLK
+        int "SD card CLK GPIO"
+        default 15
+        help
+            NOT VERIFIED against the ESP32-S3-Korvo-2 V3 schematic -- these
+            four SD pins are placeholders. Cross-check against
+            SCH_ESP32-S3-Korvo-2_V3.1.2 (dl.espressif.com) or the physical
+            board before relying on SD capture. Unlike the I2S/codec pins
+            (reused from babycare/main/app_main.c, confirmed working), no
+            SD pin mapping for this exact board revision was available
+            during development.
+
+    config CRY_GATE_SD_PIN_CMD
+        int "SD card CMD GPIO"
+        default 7
+
+    config CRY_GATE_SD_PIN_D0
+        int "SD card D0 GPIO"
+        default 4
+
+endmenu

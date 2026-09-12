@@ -1,0 +1,338 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:baby_track_flutter/config/firebase_options.dart';
+import 'package:baby_track_flutter/services/auth_service.dart';
+import 'package:baby_track_flutter/services/family_service.dart';
+import 'package:baby_track_flutter/services/device_service.dart';
+import 'package:baby_track_flutter/services/device_claim_service.dart';
+import 'package:baby_track_flutter/models/device_model.dart';
+
+/// Integration tests for Firebase connectivity and services
+/// 
+/// Run with: flutter test test/integration/firebase_integration_test.dart
+void main() {
+  setUpAll(() async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  });
+
+  group('Firebase Connection Tests', () {
+    test('Firebase should be initialized', () {
+      expect(Firebase.apps.isNotEmpty, true);
+      expect(Firebase.app().options.projectId, isNotEmpty);
+      print('✅ Firebase initialized: ${Firebase.app().options.projectId}');
+    });
+
+    test('Firestore should be accessible', () async {
+      final firestore = FirebaseFirestore.instance;
+      expect(firestore, isNotNull);
+      
+      // Try to read settings (doesn't require authentication)
+      final settings = firestore.settings;
+      expect(settings, isNotNull);
+      print('✅ Firestore accessible');
+    });
+
+    test('Firebase Auth should be accessible', () {
+      final auth = FirebaseAuth.instance;
+      expect(auth, isNotNull);
+      print('✅ Firebase Auth accessible');
+    });
+  });
+
+  group('Authentication Service Tests', () {
+    late AuthService authService;
+    String? testUserId;
+    final testEmail = 'test-${DateTime.now().millisecondsSinceEpoch}@example.com';
+    const testPassword = 'TestPassword123!';
+    const testDisplayName = 'Integration Test User';
+
+    setUpAll(() {
+      authService = AuthService();
+    });
+
+    test('Should create new user account', () async {
+      try {
+        final credential = await authService.signUpWithEmailPassword(
+          email: testEmail,
+          password: testPassword,
+          displayName: testDisplayName,
+        );
+        
+        expect(credential.user, isNotNull);
+        expect(credential.user?.email, testEmail);
+        expect(credential.user?.displayName, testDisplayName);
+        testUserId = credential.user?.uid;
+        
+        print('✅ User created: ${credential.user?.uid}');
+      } catch (e) {
+        print('❌ User creation failed: $e');
+        rethrow;
+      }
+    });
+
+    test('Should verify user exists in Firestore', () async {
+      expect(testUserId, isNotNull);
+      
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(testUserId)
+          .get();
+      
+      expect(userDoc.exists, true);
+      expect(userDoc.data()?['email'], testEmail);
+      expect(userDoc.data()?['displayName'], testDisplayName);
+      expect(userDoc.data()?['familyIds'], isNotNull);
+      
+      print('✅ User document verified in Firestore');
+    });
+
+    test('Should auto-create family for new user', () async {
+      expect(testUserId, isNotNull);
+      
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(testUserId)
+          .get();
+      
+      final familyIds = List<String>.from(userDoc.data()?['familyIds'] ?? []);
+      expect(familyIds.isNotEmpty, true);
+      
+      final familyId = familyIds.first;
+      final familyDoc = await FirebaseFirestore.instance
+          .collection('families')
+          .doc(familyId)
+          .get();
+      
+      expect(familyDoc.exists, true);
+      expect(familyDoc.data()?['ownerId'], testUserId);
+      
+      print('✅ Family auto-created: $familyId');
+    });
+
+    test('Should login with email/password', () async {
+      // Logout first
+      await authService.signOut();
+      
+      // Login
+      final credential = await authService.signInWithEmailPassword(
+        email: testEmail,
+        password: testPassword,
+      );
+      
+      expect(credential.user, isNotNull);
+      expect(credential.user?.uid, testUserId);
+      expect(credential.user?.email, testEmail);
+      
+      print('✅ Login successful');
+    });
+
+    test('Should logout successfully', () async {
+      await authService.signOut();
+      final currentUser = FirebaseAuth.instance.currentUser;
+      expect(currentUser, isNull);
+      
+      print('✅ Logout successful');
+    });
+
+    tearDownAll(() async {
+      // Cleanup: Delete test user
+      if (testUserId != null) {
+        try {
+          // Re-login to delete
+          await authService.signInWithEmailPassword(
+            email: testEmail,
+            password: testPassword,
+          );
+          
+          // Delete user document
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(testUserId)
+              .delete();
+          
+          // Delete Firebase Auth user
+          await FirebaseAuth.instance.currentUser?.delete();
+          
+          print('✅ Test user cleaned up');
+        } catch (e) {
+          print('⚠️ Cleanup failed: $e');
+        }
+      }
+    });
+  });
+
+  group('Device Claim Token Tests', () {
+    late DeviceClaimService claimService;
+    const testFamilyId = 'test-family-123';
+    const testUserId = 'test-user-456';
+
+    setUpAll(() {
+      claimService = DeviceClaimService();
+    });
+
+    test('Should create claim token', () async {
+      final token = await claimService.createClaimToken(
+        familyId: testFamilyId,
+        userId: testUserId,
+      );
+      
+      expect(token, isNotNull);
+      expect(token.token, startsWith('CLAIM-'));
+      expect(token.familyId, testFamilyId);
+      expect(token.createdBy, testUserId);
+      expect(token.isValid, true);
+      
+      print('✅ Claim token created: ${token.token}');
+    });
+
+    test('Should retrieve claim token', () async {
+      final createdToken = await claimService.createClaimToken(
+        familyId: testFamilyId,
+        userId: testUserId,
+      );
+      
+      final retrievedToken = await claimService.getClaimToken(createdToken.token);
+      
+      expect(retrievedToken, isNotNull);
+      expect(retrievedToken?.token, createdToken.token);
+      expect(retrievedToken?.familyId, testFamilyId);
+      
+      print('✅ Claim token retrieved successfully');
+    });
+
+    test('Should mark token as claimed', () async {
+      final token = await claimService.createClaimToken(
+        familyId: testFamilyId,
+        userId: testUserId,
+      );
+      
+      await claimService.markTokenClaimed(
+        token: token.token,
+        deviceId: 'test-device-123',
+      );
+      
+      final claimedToken = await claimService.getClaimToken(token.token);
+      expect(claimedToken?.claimed, true);
+      
+      print('✅ Token marked as claimed');
+    });
+
+    tearDownAll(() async {
+      // Cleanup: Delete test tokens
+      try {
+        final snapshot = await FirebaseFirestore.instance
+            .collection('deviceClaims')
+            .where('familyId', isEqualTo: testFamilyId)
+            .get();
+        
+        for (var doc in snapshot.docs) {
+          await doc.reference.delete();
+        }
+        print('✅ Test claim tokens cleaned up');
+      } catch (e) {
+        print('⚠️ Token cleanup failed: $e');
+      }
+    late DeviceService deviceService;
+    const testFamilyId = 'test-family-device-789';
+    String? testDeviceId;
+
+    setUpAll(() {
+      deviceService = DeviceService();
+    })
+  group('Device Service Tests', () {
+    final deviceService = DeviceService();
+    const testFamilyId = 'test-family-device-789';
+    String? testDeviceId;
+
+    test('Should register a device', () async {
+      final now = DateTime.now();
+      final device = DeviceModel(
+        id: '',
+        name: 'Test Monitor',
+        familyId: testFamilyId,
+        status: DeviceStatus.online,
+        firmwareVersion: '1.0.0',
+        capabilities: DeviceCapabilities(
+          hasCamera: true,
+          hasMicrophone: true,
+          hasVitalSensors: true,
+          supportsVideo: false,
+          supportsAudio: false,
+        ),
+        createdAt: now,
+        updatedAt: now,
+      );
+      
+      testDeviceId = await deviceService.registerDevice(device);
+      
+      expect(testDeviceId, isNotEmpty);
+      print('✅ Device registered: $testDeviceId');
+    });
+
+    test('Should retrieve device by ID', () async {
+      expect(testDeviceId, isNotNull);
+      
+      final device = await deviceService.getDevice(testDeviceId!);
+      
+      expect(device, isNotNull);
+      expect(device?.id, testDeviceId);
+      expect(device?.name, 'Test Monitor');
+      expect(device?.familyId, testFamilyId);
+      
+      print('✅ Device retrieved successfully');
+    });
+
+    test('Should update device status', () async {
+      expect(testDeviceId, isNotNull);
+      
+      await deviceService.updateDeviceStatus(
+        testDeviceId!,
+        DeviceStatus.offline,
+      );
+      
+      final device = await deviceService.getDevice(testDeviceId!);
+      expect(device?.status, DeviceStatus.offline);
+      
+      print('✅ Device status updated');
+    });
+
+    test('Should get devices by family', () async {
+      final devices = await deviceService.getFamilyDevices(testFamilyId);
+      
+      expect(devices.isNotEmpty, true);
+      expect(devices.any((d) => d.id == testDeviceId), true);
+      
+      print('✅ Family devices retrieved: ${devices.length}');
+    });
+
+    tearDownAll(() async {
+      // Cleanup: Delete test device
+      if (testDeviceId != null) {
+        try {
+          await deviceService.deleteDevice(testDeviceId!);
+          print('✅ Test device cleaned up');
+        } catch (e) {
+          print('⚠️ Device cleanup failed: $e');
+        }
+      }
+    });
+  });
+
+  group('Firestore Security Rules Tests', () {
+    test('Should enforce user document ownership', () async {
+      // This would require authentication and proper test setup
+      // Placeholder for security rule testing
+      print('⚠️ Security rules testing requires authenticated context');
+    });
+
+    test('Should enforce family access control', () async {
+      // Placeholder for family isolation testing
+      print('⚠️ Family isolation testing requires multiple authenticated users');
+    });
+  });
+}
